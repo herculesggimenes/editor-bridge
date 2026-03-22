@@ -511,6 +511,69 @@ class DevEditorTests(unittest.TestCase):
         self.assertIn("public.python-script", uti_list_path.read_text())
         self.assertIn("dev.editorbridge.programmable.custom", uti_list_path.read_text())
 
+    def test_build_artifacts_can_include_resolved_system_utis(self) -> None:
+        config_path = self.root / "config.plist"
+        fragment_path = self.root / "generated" / "fragment.plist"
+        uti_list_path = self.root / "generated" / "utis.txt"
+        extension_list_path = self.root / "generated" / "extensions.txt"
+        manifest_path = self.root / "manifest.json"
+
+        with config_path.open("wb") as handle:
+            plistlib.dump(
+                {
+                    "associations": {
+                        "includeStaticBaseTypes": False,
+                        "includeProgrammingPreset": True,
+                        "includePlainText": False,
+                        "includePublicData": False,
+                        "customExtensions": [],
+                        "customFilenames": [],
+                        "excludedExtensions": [],
+                        "excludedFilenames": [],
+                        "extraContentTypes": [],
+                    }
+                },
+                handle,
+            )
+
+        manifest_path.write_text(
+            textwrap.dedent(
+                """\
+                {
+                  "extensions": ["ts", "py", "yaml"],
+                  "filenames": []
+                }
+                """
+            )
+        )
+
+        result = self.run_cmd(
+            [
+                "/usr/bin/env",
+                "python3",
+                str(BUILD_ARTIFACTS),
+                "--config",
+                str(config_path),
+                "--fragment",
+                str(fragment_path),
+                "--uti-list",
+                str(uti_list_path),
+                "--extension-list",
+                str(extension_list_path),
+                "--manifest",
+                str(manifest_path),
+                "--resolve-system-utis",
+            ],
+            self.base_env(),
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        content = uti_list_path.read_text()
+        self.assertIn("public.mpeg-2-transport-stream", content)
+        self.assertIn("public.python-script", content)
+        self.assertIn("public.yaml", content)
+        self.assertEqual(extension_list_path.read_text().splitlines(), ["py", "ts", "yaml"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,12 +4,14 @@ from __future__ import annotations
 import argparse
 import json
 import plistlib
+import subprocess
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG = REPO_ROOT / "Sources" / "EditorBridgeApp" / "Resources" / "default-config.plist"
 DEFAULT_MANIFEST = REPO_ROOT / "Sources" / "EditorBridgeApp" / "Resources" / "default-programmable-files.json"
+RESOLVE_UTIS_SWIFT = REPO_ROOT / "config" / "scripts" / "resolve_extension_utis.swift"
 CUSTOM_UTI = "dev.editorbridge.programmable.custom"
 STATIC_BASE_UTIS = [
     "public.source-code",
@@ -27,8 +29,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", type=Path, required=True)
     parser.add_argument("--fragment", type=Path, required=True)
     parser.add_argument("--uti-list", type=Path, required=True)
+    parser.add_argument("--extension-list", type=Path)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--ensure-config", action="store_true")
+    parser.add_argument("--resolve-system-utis", action="store_true")
     return parser.parse_args()
 
 
@@ -68,7 +72,23 @@ def string_list(values: object) -> list[str]:
     return [str(item) for item in values if str(item).strip()]
 
 
-def compute_types(config: dict, manifest: dict) -> tuple[list[str], list[str], list[str]]:
+def resolve_system_utis(extensions: list[str]) -> list[str]:
+    if not extensions:
+        return []
+
+    payload = json.dumps({"extensions": extensions})
+    process = subprocess.run(
+        ["/usr/bin/swift", str(RESOLVE_UTIS_SWIFT)],
+        input=payload,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    decoded = json.loads(process.stdout or "{}")
+    return string_list(decoded.get("resolved_utis", []))
+
+
+def compute_types(config: dict, manifest: dict, *, resolve_utis: bool) -> tuple[list[str], list[str], list[str]]:
     associations = config.get("associations", {})
     extensions: set[str] = set()
     filenames: set[str] = set()
@@ -95,6 +115,8 @@ def compute_types(config: dict, manifest: dict) -> tuple[list[str], list[str], l
     if associations.get("includePublicData", False):
         utis.append("public.data")
     utis.extend(string_list(associations.get("extraContentTypes", [])))
+    if resolve_utis:
+        utis.extend(resolve_system_utis(sorted(extensions)))
 
     if extensions or filenames:
         utis.append(CUSTOM_UTI)
@@ -143,7 +165,7 @@ def main() -> int:
     config = load_plist(args.config)
     manifest = load_manifest(args.manifest)
 
-    extensions, filenames, utis = compute_types(config, manifest)
+    extensions, filenames, utis = compute_types(config, manifest, resolve_utis=args.resolve_system_utis)
     fragment = build_fragment(extensions, filenames, utis)
 
     ensure_parent(args.fragment)
@@ -152,6 +174,9 @@ def main() -> int:
 
     ensure_parent(args.uti_list)
     args.uti_list.write_text("\n".join(utis) + ("\n" if utis else ""), encoding="utf-8")
+    if args.extension_list is not None:
+        ensure_parent(args.extension_list)
+        args.extension_list.write_text("\n".join(extensions) + ("\n" if extensions else ""), encoding="utf-8")
     return 0
 
 

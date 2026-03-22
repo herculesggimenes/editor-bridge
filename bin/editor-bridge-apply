@@ -20,6 +20,7 @@ CONFIG_DIR="$(dirname "$CONFIG_PATH")"
 GENERATED_DIR="$CONFIG_DIR/generated"
 FRAGMENT_PATH="$GENERATED_DIR/dev-editor-info.generated.plist"
 UTI_LIST_PATH="$GENERATED_DIR/dev-editor-associated-utis.txt"
+EXTENSION_LIST_PATH="$GENERATED_DIR/dev-editor-associated-extensions.txt"
 BUILD_SCRIPT="$REPO_ROOT/config/scripts/build_editor_bridge_artifacts.py"
 
 mkdir -p "$CONFIG_DIR" "$GENERATED_DIR"
@@ -29,10 +30,13 @@ python3 "$BUILD_SCRIPT" \
   --ensure-config \
   --config "$CONFIG_PATH" \
   --fragment "$FRAGMENT_PATH" \
-  --uti-list "$UTI_LIST_PATH"
+  --uti-list "$UTI_LIST_PATH" \
+  --extension-list "$EXTENSION_LIST_PATH" \
+  --resolve-system-utis
 
 export DEV_EDITOR_BUNDLE_FRAGMENT_EXTRA="$FRAGMENT_PATH"
 export DEV_EDITOR_ASSOCIATION_UTIS_FILE="$UTI_LIST_PATH"
+export DEV_EDITOR_ASSOCIATION_EXTENSIONS_FILE="$EXTENSION_LIST_PATH"
 
 "$REPO_ROOT/config/scripts/install-dev-editor-app.sh"
 "$REPO_ROOT/config/scripts/install-zed-shim-app.sh"

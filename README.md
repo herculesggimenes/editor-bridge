@@ -17,6 +17,7 @@ macOS app and CLI shims that route file opens into Neovim running through Ghostt
 - `editor-bridge-apply` turns that config into two generated artifacts:
   - a LaunchServices plist fragment merged into `Dev Editor.app`
   - a UTI list that `duti` applies as default handlers
+- the apply step also resolves concrete system UTIs for configured extensions, which is required for cases like `.ts` on macOS where the extension maps to `public.mpeg-2-transport-stream`
 - The broad programmable-file preset is generated from GitHub Linguist's language database and can be extended or trimmed per machine.
 
 ## Flow
@@ -99,6 +100,10 @@ Regenerate it from GitHub Linguist with:
 ```sh
 ./config/scripts/update_programmable_manifest.rb
 ```
+
+## Known Limits
+
+- `html` and `htm` can reject reassignment through LaunchServices on some macOS setups with `error -54`. The installer treats that as a warning and continues applying the rest of the developer-file set.
 
 ## Requirements
 
