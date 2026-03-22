@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>version</key>
+  <integer>1</integer>
+  <key>launcher</key>
+  <dict>
+    <key>ghosttyApp</key>
+    <string>Ghostty.app</string>
+    <key>nvimBin</key>
+    <string></string>
+    <key>tmuxDefaultSession</key>
+    <string>main</string>
+    <key>tmuxWindowName</key>
+    <string>nvim</string>
+  </dict>
+  <key>associations</key>
+  <dict>
+    <key>installDutiMappings</key>
+    <true/>
+    <key>includeStaticBaseTypes</key>
+    <true/>
+    <key>includeProgrammingPreset</key>
+    <true/>
+    <key>includePlainText</key>
+    <false/>
+    <key>includePublicData</key>
+    <false/>
+    <key>customExtensions</key>
+    <array/>
+    <key>customFilenames</key>
+    <array/>
+    <key>excludedExtensions</key>
+    <array/>
+    <key>excludedFilenames</key>
+    <array/>
+    <key>extraContentTypes</key>
+    <array/>
+  </dict>
+</dict>
+</plist>

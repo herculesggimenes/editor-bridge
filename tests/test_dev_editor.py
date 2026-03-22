@@ -1,5 +1,6 @@
 import os
 import pathlib
+import plistlib
 import stat
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ REPO = pathlib.Path(__file__).resolve().parents[1]
 DEV_EDITOR = REPO / "bin" / "dev-editor"
 DEV_EDITOR_GHOSTTY = REPO / "bin" / "dev-editor-ghostty"
 ZED_SHIM = REPO / "bin" / "zed"
+BUILD_ARTIFACTS = REPO / "config" / "scripts" / "build_editor_bridge_artifacts.py"
 
 
 def write_executable(path: pathlib.Path, content: str) -> None:
@@ -39,6 +41,13 @@ class DevEditorTests(unittest.TestCase):
             "PATH": "/usr/bin:/bin",
         }
 
+    def write_config(self, payload: dict) -> pathlib.Path:
+        config_path = self.home / ".config" / "editor-bridge" / "config.plist"
+        config_path.parent.mkdir(parents=True)
+        with config_path.open("wb") as handle:
+            plistlib.dump(payload, handle)
+        return config_path
+
     def run_cmd(self, args: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             args,
@@ -60,6 +69,39 @@ class DevEditorTests(unittest.TestCase):
                 printf '%s\\n' "$*" >> "{log}"
                 """
             ),
+        )
+
+        env = self.base_env()
+        env["DEV_EDITOR_DISABLE_GHOSTTY"] = "1"
+        result = self.run_cmd([str(DEV_EDITOR), "/tmp/example.txt"], env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(log.read_text().strip(), "/tmp/example.txt")
+
+    def test_dev_editor_reads_nvim_path_from_config(self) -> None:
+        log = self.logs / "nvim.log"
+        configured_nvim = self.local_bin / "configured-nvim"
+
+        write_executable(
+            configured_nvim,
+            textwrap.dedent(
+                f"""\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                printf '%s\\n' "$*" >> "{log}"
+                """
+            ),
+        )
+
+        self.write_config(
+            {
+                "launcher": {
+                    "ghosttyApp": "Ghostty.app",
+                    "nvimBin": str(configured_nvim),
+                    "tmuxDefaultSession": "main",
+                    "tmuxWindowName": "nvim",
+                }
+            }
         )
 
         env = self.base_env()
@@ -278,6 +320,63 @@ class DevEditorTests(unittest.TestCase):
         self.assertIn(str(fake_nvim), log)
         self.assertIn("tmux:attach-session -t main", log)
 
+    def test_dev_editor_ghostty_uses_configured_tmux_names(self) -> None:
+        tmux_log = self.logs / "tmux.log"
+        fake_nvim = self.local_bin / "nvim"
+
+        write_executable(
+            fake_nvim,
+            textwrap.dedent(
+                """\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                """
+            ),
+        )
+
+        write_executable(
+            self.local_bin / "tmux",
+            textwrap.dedent(
+                f"""\
+                #!/usr/bin/env bash
+                set -euo pipefail
+                printf 'tmux:%s\\n' "$*" >> "{tmux_log}"
+                cmd="${{1:-}}"
+                shift || true
+                case "$cmd" in
+                  list-sessions)
+                    exit 0
+                    ;;
+                  new-session)
+                    exit 0
+                    ;;
+                  display-message)
+                    exit 1
+                    ;;
+                esac
+                """
+            ),
+        )
+
+        self.write_config(
+            {
+                "launcher": {
+                    "ghosttyApp": "Ghostty.app",
+                    "nvimBin": str(fake_nvim),
+                    "tmuxDefaultSession": "workspace",
+                    "tmuxWindowName": "editor",
+                }
+            }
+        )
+
+        env = self.base_env()
+        result = self.run_cmd([str(DEV_EDITOR_GHOSTTY), "--cwd", "/", "--", "/tmp/example.txt"], env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = tmux_log.read_text()
+        self.assertIn("tmux:new-session -s workspace -n editor -c /", log)
+        self.assertIn(str(fake_nvim), log)
+
     def test_zed_shim_uses_nonblocking_launcher_by_default(self) -> None:
         open_log = self.logs / "open.log"
         wait_log = self.logs / "wait.log"
@@ -345,6 +444,72 @@ class DevEditorTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(open_log.exists())
         self.assertEqual(wait_log.read_text().strip(), f"+call cursor(12,4) {target}")
+
+    def test_build_artifacts_generates_custom_uti_and_filtered_lists(self) -> None:
+        config_path = self.root / "config.plist"
+        fragment_path = self.root / "generated" / "fragment.plist"
+        uti_list_path = self.root / "generated" / "utis.txt"
+        manifest_path = self.root / "manifest.json"
+
+        with config_path.open("wb") as handle:
+            plistlib.dump(
+                {
+                    "associations": {
+                        "includeStaticBaseTypes": True,
+                        "includeProgrammingPreset": True,
+                        "includePlainText": False,
+                        "includePublicData": True,
+                        "customExtensions": [".foo"],
+                        "customFilenames": [".customrc"],
+                        "excludedExtensions": [".bar"],
+                        "excludedFilenames": ["Dockerfile"],
+                        "extraContentTypes": ["public.python-script"],
+                    }
+                },
+                handle,
+            )
+
+        manifest_path.write_text(
+            textwrap.dedent(
+                """\
+                {
+                  "extensions": ["bar", "baz"],
+                  "filenames": ["Dockerfile", ".envrc"]
+                }
+                """
+            )
+        )
+
+        result = self.run_cmd(
+            [
+                "/usr/bin/env",
+                "python3",
+                str(BUILD_ARTIFACTS),
+                "--config",
+                str(config_path),
+                "--fragment",
+                str(fragment_path),
+                "--uti-list",
+                str(uti_list_path),
+                "--manifest",
+                str(manifest_path),
+            ],
+            self.base_env(),
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+        with fragment_path.open("rb") as handle:
+            fragment = plistlib.load(handle)
+
+        exported = fragment["UTExportedTypeDeclarations"][0]
+        self.assertEqual(exported["UTTypeIdentifier"], "dev.editorbridge.programmable.custom")
+        self.assertEqual(exported["UTTypeTagSpecification"]["public.filename-extension"], ["baz", "foo"])
+        self.assertEqual(exported["UTTypeTagSpecification"]["public.filename"], [".customrc", ".envrc"])
+
+        self.assertIn("public.data", uti_list_path.read_text())
+        self.assertIn("public.python-script", uti_list_path.read_text())
+        self.assertIn("dev.editorbridge.programmable.custom", uti_list_path.read_text())
 
 
 if __name__ == "__main__":

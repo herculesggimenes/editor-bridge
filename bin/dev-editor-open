@@ -1,7 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-GHOSTTY_APP="${GHOSTTY_APP:-Ghostty.app}"
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  case "$SCRIPT_SOURCE" in
+    /*) ;;
+    *) SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+. "$SCRIPT_DIR/dev-editor-config.sh"
+
+GHOSTTY_APP="${GHOSTTY_APP:-$(editor_bridge_string_or_default "launcher.ghosttyApp" "Ghostty.app")}"
 GHOSTTY_HELPER="${DEV_EDITOR_GHOSTTY_HELPER:-$HOME/.local/bin/dev-editor-ghostty}"
 
 if [ ! -x "$GHOSTTY_HELPER" ]; then

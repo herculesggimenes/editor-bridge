@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  case "$SCRIPT_SOURCE" in
+    /*) ;;
+    *) SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+. "$SCRIPT_DIR/dev-editor-config.sh"
+
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+CONFIG_PATH="$(editor_bridge_config_path)"
+CONFIG_TEMPLATE="$REPO_ROOT/Sources/EditorBridgeApp/Resources/default-config.plist"
+CONFIG_DIR="$(dirname "$CONFIG_PATH")"
+GENERATED_DIR="$CONFIG_DIR/generated"
+FRAGMENT_PATH="$GENERATED_DIR/dev-editor-info.generated.plist"
+UTI_LIST_PATH="$GENERATED_DIR/dev-editor-associated-utis.txt"
+BUILD_SCRIPT="$REPO_ROOT/config/scripts/build_editor_bridge_artifacts.py"
+
+mkdir -p "$CONFIG_DIR" "$GENERATED_DIR"
+[ -f "$CONFIG_PATH" ] || cp "$CONFIG_TEMPLATE" "$CONFIG_PATH"
+
+python3 "$BUILD_SCRIPT" \
+  --ensure-config \
+  --config "$CONFIG_PATH" \
+  --fragment "$FRAGMENT_PATH" \
+  --uti-list "$UTI_LIST_PATH"
+
+export DEV_EDITOR_BUNDLE_FRAGMENT_EXTRA="$FRAGMENT_PATH"
+export DEV_EDITOR_ASSOCIATION_UTIS_FILE="$UTI_LIST_PATH"
+
+"$REPO_ROOT/config/scripts/install-dev-editor-app.sh"
+"$REPO_ROOT/config/scripts/install-zed-shim-app.sh"
+"$REPO_ROOT/config/scripts/install-zed-cli-shim.sh"
+
+if [ "$(editor_bridge_bool_or_default "associations.installDutiMappings" "true")" != "false" ]; then
+  "$REPO_ROOT/config/scripts/set-dev-editor-associations.sh"
+fi

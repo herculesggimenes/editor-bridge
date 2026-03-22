@@ -12,15 +12,23 @@ while [ -L "$SCRIPT_SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 . "$SCRIPT_DIR/dev-editor-env.sh"
+. "$SCRIPT_DIR/dev-editor-config.sh"
 
-WINDOW_NAME="${TMUX_EDITOR_WINDOW_NAME:-nvim}"
-DEFAULT_SESSION="${TMUX_EDITOR_DEFAULT_SESSION:-main}"
+WINDOW_NAME="${TMUX_EDITOR_WINDOW_NAME:-$(editor_bridge_string_or_default "launcher.tmuxWindowName" "nvim")}"
+DEFAULT_SESSION="${TMUX_EDITOR_DEFAULT_SESSION:-$(editor_bridge_string_or_default "launcher.tmuxDefaultSession" "main")}"
 STATUS_FILE=""
 CHANNEL=""
 WORKDIR="$PWD"
 NVIM_BIN="${NVIM_BIN:-}"
 SESSION_DELIM=':'
 STAY_ATTACHED=0
+
+if [ -z "$NVIM_BIN" ]; then
+  configured_nvim="$(editor_bridge_string_or_default "launcher.nvimBin" "")"
+  if [ -n "$configured_nvim" ]; then
+    NVIM_BIN="$configured_nvim"
+  fi
+fi
 
 if [ -z "$NVIM_BIN" ]; then
   NVIM_BIN="$(command -v nvim || true)"
