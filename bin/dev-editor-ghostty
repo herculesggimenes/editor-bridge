@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  case "$SCRIPT_SOURCE" in
+    /*) ;;
+    *) SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+. "$SCRIPT_DIR/dev-editor-env.sh"
+
+WINDOW_NAME="${TMUX_EDITOR_WINDOW_NAME:-nvim}"
+DEFAULT_SESSION="${TMUX_EDITOR_DEFAULT_SESSION:-main}"
+STATUS_FILE=""
+CHANNEL=""
+WORKDIR="$PWD"
+NVIM_BIN="${NVIM_BIN:-}"
+SESSION_DELIM=':'
+STAY_ATTACHED=0
+
+if [ -z "$NVIM_BIN" ]; then
+  NVIM_BIN="$(command -v nvim || true)"
+fi
+
+if [ -z "$NVIM_BIN" ]; then
+  echo "dev-editor-ghostty: nvim not found in PATH" >&2
+  exit 1
+fi
+
+signal_done() {
+  local rc="$1"
+  if [ -n "$STATUS_FILE" ]; then
+    printf '%s' "$rc" >"$STATUS_FILE"
+  fi
+  if [ -n "$CHANNEL" ] && command -v tmux >/dev/null 2>&1; then
+    tmux wait-for -S "$CHANNEL" >/dev/null 2>&1 || true
+  fi
+}
+
+pick_tmux_session() {
+  tmux list-sessions -F "#{?session_attached,1,0}${SESSION_DELIM}#{session_last_attached}${SESSION_DELIM}#{session_activity}${SESSION_DELIM}#{session_name}" 2>/dev/null \
+    | LC_ALL=C sort -t "$SESSION_DELIM" -k1,1nr -k2,2nr -k3,3nr \
+    | head -n1 \
+    | cut -d "$SESSION_DELIM" -f4-
+}
+
+default_shell() {
+  if [ -n "${SHELL:-}" ] && [ -x "${SHELL:-}" ]; then
+    printf '%s\n' "$SHELL"
+    return
+  fi
+  if command -v zsh >/dev/null 2>&1; then
+    command -v zsh
+    return
+  fi
+  if command -v bash >/dev/null 2>&1; then
+    command -v bash
+    return
+  fi
+  printf '%s\n' /bin/sh
+}
+
+build_tmux_command() {
+  local channel="$1"
+  local status_file="$2"
+  local client_tty="${3:-}"
+  local detach_client="${4:-0}"
+  shift 4
+
+  local editor_cmd shell_cmd
+  printf -v editor_cmd '%q ' "$NVIM_BIN" "$@"
+
+  shell_cmd="cd $(printf '%q' "$WORKDIR"); "
+  shell_cmd+="${editor_cmd}; "
+  shell_cmd+="rc=\$?; "
+  if [ -n "$status_file" ]; then
+    shell_cmd+="printf '%s' \"\$rc\" > $(printf '%q' "$status_file"); "
+  fi
+  if [ -n "$channel" ]; then
+    shell_cmd+="tmux wait-for -S $(printf '%q' "$channel"); "
+  fi
+  if [ "$detach_client" = "1" ] && [ -n "$client_tty" ]; then
+    shell_cmd+="tmux detach-client -t $(printf '%q' "$client_tty") >/dev/null 2>&1 || true; "
+  fi
+  shell_cmd+="exit \$rc"
+
+  printf 'sh -c %q' "$shell_cmd"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --channel)
+      CHANNEL="$2"
+      shift 2
+      ;;
+    --status-file)
+      STATUS_FILE="$2"
+      shift 2
+      ;;
+    --cwd)
+      WORKDIR="$2"
+      shift 2
+      ;;
+    --stay-attached)
+      STAY_ATTACHED=1
+      shift
+      ;;
+    --)
+      shift
+      break
+      ;;
+    *)
+      break
+      ;;
+  esac
+done
+
+if ! command -v tmux >/dev/null 2>&1 || [ "${DEV_EDITOR_DISABLE_TMUX:-0}" = "1" ]; then
+  cd "$WORKDIR"
+  "$NVIM_BIN" "$@"
+  rc=$?
+  signal_done "$rc"
+  exit "$rc"
+fi
+
+if [ -n "${TMUX:-}" ] && tmux display-message -p '#{session_name}' >/dev/null 2>&1; then
+  if [ "$STAY_ATTACHED" = "1" ]; then
+    TMUX_COMMAND="$(build_tmux_command "" "" "" 0 "$@")"
+    tmux new-window -n "$WINDOW_NAME" -c "$WORKDIR" "$TMUX_COMMAND"
+    exit 0
+  fi
+  TMUX_COMMAND="$(build_tmux_command "$CHANNEL" "$STATUS_FILE" "" 0 "$@")"
+  tmux new-window -n "$WINDOW_NAME" -c "$WORKDIR" "$TMUX_COMMAND"
+  if [ -n "$CHANNEL" ] && [ -n "$STATUS_FILE" ]; then
+    tmux wait-for "$CHANNEL"
+    exit "$(cat "$STATUS_FILE")"
+  fi
+  exit 0
+fi
+
+TARGET_SESSION="$(pick_tmux_session || true)"
+if [ -n "$TARGET_SESSION" ]; then
+  if [ "$STAY_ATTACHED" = "1" ]; then
+    TMUX_COMMAND="$(build_tmux_command "" "" "" 0 "$@")"
+    tmux new-window -t "${TARGET_SESSION}:" -n "$WINDOW_NAME" -c "$WORKDIR" "$TMUX_COMMAND"
+    exec tmux attach-session -t "$TARGET_SESSION"
+  fi
+  CLIENT_TTY="$(tty 2>/dev/null || true)"
+  TMUX_COMMAND="$(build_tmux_command "$CHANNEL" "$STATUS_FILE" "$CLIENT_TTY" 1 "$@")"
+  tmux new-window -t "${TARGET_SESSION}:" -n "$WINDOW_NAME" -c "$WORKDIR" "$TMUX_COMMAND"
+  exec tmux attach-session -t "$TARGET_SESSION"
+fi
+
+if [ "$STAY_ATTACHED" = "1" ]; then
+  SHELL_BIN="$(default_shell)"
+  tmux new-session -d -s "$DEFAULT_SESSION" -n shell -c "$WORKDIR" "$SHELL_BIN"
+  TMUX_COMMAND="$(build_tmux_command "" "" "" 0 "$@")"
+  tmux new-window -t "${DEFAULT_SESSION}:" -n "$WINDOW_NAME" -c "$WORKDIR" "$TMUX_COMMAND"
+  exec tmux attach-session -t "$DEFAULT_SESSION"
+fi
+
+TMUX_COMMAND="$(build_tmux_command "$CHANNEL" "$STATUS_FILE" "" 0 "$@")"
+exec tmux new-session -s "$DEFAULT_SESSION" -n "$WINDOW_NAME" -c "$WORKDIR" "$TMUX_COMMAND"

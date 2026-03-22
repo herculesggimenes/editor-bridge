@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+GHOSTTY_APP="${GHOSTTY_APP:-Ghostty.app}"
+GHOSTTY_HELPER="${DEV_EDITOR_GHOSTTY_HELPER:-$HOME/.local/bin/dev-editor-ghostty}"
+
+if [ ! -x "$GHOSTTY_HELPER" ]; then
+  echo "dev-editor-open: missing helper at $GHOSTTY_HELPER" >&2
+  exit 1
+fi
+
+exec open -na "$GHOSTTY_APP" --args -e "$GHOSTTY_HELPER" --stay-attached --cwd "$PWD" -- "$@"

@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  case "$SCRIPT_SOURCE" in
+    /*) ;;
+    *) SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+. "$SCRIPT_DIR/dev-editor-env.sh"
+
+GHOSTTY_APP="${GHOSTTY_APP:-Ghostty.app}"
+GHOSTTY_HELPER="${DEV_EDITOR_GHOSTTY_HELPER:-$HOME/.local/bin/dev-editor-ghostty}"
+NVIM_BIN="${NVIM_BIN:-}"
+
+if [ -z "$NVIM_BIN" ]; then
+  NVIM_BIN="$(command -v nvim || true)"
+fi
+
+if [ -z "$NVIM_BIN" ]; then
+  echo "dev-editor: nvim not found in PATH" >&2
+  exit 1
+fi
+
+has_tty() {
+  [ -t 0 ] || [ -t 1 ] || [ -t 2 ]
+}
+
+read_status() {
+  local rc=1
+  if [ -f "$STATUS_FILE" ]; then
+    rc="$(cat "$STATUS_FILE")"
+  fi
+  printf '%s\n' "${rc:-1}"
+}
+
+wait_channel() {
+  if command -v tmux >/dev/null 2>&1; then
+    tmux wait-for "$CHANNEL"
+  else
+    while [ ! -f "$STATUS_FILE" ]; do
+      sleep 0.1
+    done
+  fi
+}
+
+STATUS_FILE="$(mktemp "${TMPDIR:-/tmp}/dev-editor.XXXXXX")"
+CHANNEL="dev-editor-${PPID:-$$}-$(date +%s%N)"
+cleanup() {
+  rm -f "$STATUS_FILE"
+}
+trap cleanup EXIT
+
+if [ -n "${TMUX:-}" ] && command -v tmux >/dev/null 2>&1 && tmux display-message -p '#{session_name}' >/dev/null 2>&1; then
+  exec "$GHOSTTY_HELPER" --channel "$CHANNEL" --status-file "$STATUS_FILE" --cwd "$PWD" -- "$@"
+fi
+
+if [ "${DEV_EDITOR_DISABLE_GHOSTTY:-0}" = "1" ] || ! has_tty || [ ! -x "$GHOSTTY_HELPER" ]; then
+  exec "$NVIM_BIN" "$@"
+fi
+
+open -na "$GHOSTTY_APP" --args -e "$GHOSTTY_HELPER" --channel "$CHANNEL" --status-file "$STATUS_FILE" --cwd "$PWD" -- "$@"
+wait_channel
+exit "$(read_status)"

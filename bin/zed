@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+  case "$SCRIPT_SOURCE" in
+    /*) ;;
+    *) SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE" ;;
+  esac
+done
+SCRIPT_DIR="$(cd -P "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+. "$SCRIPT_DIR/dev-editor-env.sh"
+
+DEV_EDITOR_BIN="${DEV_EDITOR_BIN:-$HOME/.local/bin/dev-editor}"
+DEV_EDITOR_OPEN_BIN="${DEV_EDITOR_OPEN_BIN:-$HOME/.local/bin/dev-editor-open}"
+
+usage() {
+  cat <<'EOF'
+zed shim -> Dev Editor
+
+Supported:
+  zed <path>
+  zed <path>:<line>
+  zed <path>:<line>:<column>
+  zed --wait <path>
+  zed -n|-a|-r <path>
+  zed --zed /path/to/Zed.app <path>
+EOF
+}
+
+line=""
+column=""
+wait_mode=0
+declare -a targets=()
+
+parse_target() {
+  local target="$1"
+  local parsed_path="$target"
+  local parsed_line=""
+  local parsed_column=""
+
+  if [[ "$target" =~ ^(.+):([0-9]+):([0-9]+)$ ]] && [ -e "${BASH_REMATCH[1]}" ]; then
+    parsed_path="${BASH_REMATCH[1]}"
+    parsed_line="${BASH_REMATCH[2]}"
+    parsed_column="${BASH_REMATCH[3]}"
+  elif [[ "$target" =~ ^(.+):([0-9]+)$ ]] && [ -e "${BASH_REMATCH[1]}" ]; then
+    parsed_path="${BASH_REMATCH[1]}"
+    parsed_line="${BASH_REMATCH[2]}"
+  fi
+
+  printf '%s\n%s\n%s\n' "$parsed_path" "$parsed_line" "$parsed_column"
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -w|--wait)
+      wait_mode=1
+      shift
+      ;;
+    --line)
+      line="${2:-}"
+      shift 2
+      ;;
+    --column)
+      column="${2:-}"
+      shift 2
+      ;;
+    -n|--new|-a|--add|-r|--reuse|--foreground|--stable|--preview|--nightly)
+      shift
+      ;;
+    --zed|--user-data-dir|--diff)
+      shift 2
+      ;;
+    -v|--version)
+      printf '%s\n' 'zed shim -> Dev Editor'
+      exit 0
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      while [ "$#" -gt 0 ]; do
+        targets+=("$1")
+        shift
+      done
+      ;;
+    *)
+      targets+=("$1")
+      shift
+      ;;
+  esac
+done
+
+declare -a editor_args=()
+cursor_set=0
+
+if [ "${#targets[@]}" -eq 0 ]; then
+  targets+=(".")
+fi
+
+for target in "${targets[@]}"; do
+  parsed_output="$(parse_target "$target")"
+  parsed_path=""
+  parsed_line=""
+  parsed_column=""
+  while IFS= read -r parsed_value; do
+    if [ -z "$parsed_path" ]; then
+      parsed_path="$parsed_value"
+    elif [ -z "$parsed_line" ]; then
+      parsed_line="$parsed_value"
+    else
+      parsed_column="$parsed_value"
+    fi
+  done <<EOF
+$parsed_output
+EOF
+
+  if [ "$cursor_set" = "0" ]; then
+    if [ -n "$line" ]; then
+      parsed_line="$line"
+    fi
+    if [ -n "$column" ]; then
+      parsed_column="$column"
+    fi
+
+    if [ -n "$parsed_line" ] && [ -n "$parsed_column" ]; then
+      editor_args+=("+call cursor($parsed_line,$parsed_column)")
+      cursor_set=1
+    elif [ -n "$parsed_line" ]; then
+      editor_args+=("+$parsed_line")
+      cursor_set=1
+    fi
+  fi
+
+  editor_args+=("$parsed_path")
+done
+
+if [ "$wait_mode" = "1" ]; then
+  exec "$DEV_EDITOR_BIN" "${editor_args[@]}"
+fi
+
+exec "$DEV_EDITOR_OPEN_BIN" "${editor_args[@]}"
